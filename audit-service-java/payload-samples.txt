@@ -1,0 +1,39 @@
+Here are concise sample request payloads / query examples for every AuditController endpoint.
+1)
+POST /audit/events JSON body: {
+  "eventType": "USER_LOGIN",
+  "actorId": "user-123",
+  "resourceType": "session",
+  "resourceId": "s-abc",
+  "payload": {
+    "ip": "10.1.2.3",
+    "device": "chrome"
+  },
+  "timestamp": "2026-09-01T22:00:00Z"
+}
+2)
+GET /audit/events (query params) Example URL: GET /audit/events?actorId=user-123&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z&page=1&limit=20&redacted=false
+3)
+GET /audit/events/{filterField}?value=... Example URL: GET /audit/events/actorId?value=user-123&limit=10&page=1
+4)
+GET /audit/events/{filterField}/{value} Example URL: GET /audit/events/eventType/USER_LOGIN?limit=25&page=1
+5)
+POST /audit/redact JSON body: {
+  "recordId": 42,
+  "redactorId": "privacy-officer",
+  "fields": [
+    "payload.ssn",
+    "payload.account.number"
+  ]
+}
+6)
+POST /audit/erase JSON body: {
+  "recordId": 42,
+  "eraserId": "privacy-officer"
+}
+7)
+POST /audit/archive (query param) Example URL: POST /audit/archive?days=90 (no body)
+8)
+GET /audit/export (query params) Examples: GET /audit/export?actorId=user-123 OR GET /audit/export?resourceId=order-789
+9)
+GET /audit/verify Example URL: GET /audit/verify (no body)
