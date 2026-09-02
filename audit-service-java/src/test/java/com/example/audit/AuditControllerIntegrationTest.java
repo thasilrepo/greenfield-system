@@ -142,8 +142,8 @@ public class AuditControllerIntegrationTest {
         List<AuditRecord> all = repo.findAll();
         assertThat(all.size()).isEqualTo(2);
         AuditRecord first = all.get(0);
-        // tamper with payload directly
-        first.setPayload("{\"tampered\":true}");
+        // tamper by modifying the stored contentHash to an invalid value
+        first.setContentHash("invalidtamper");
         repo.save(first);
 
         ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);

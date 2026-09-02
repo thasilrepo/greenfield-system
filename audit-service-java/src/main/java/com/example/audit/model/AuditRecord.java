@@ -21,9 +21,15 @@ public class AuditRecord {
 
     @Lob
     @Column(columnDefinition = "CLOB")
-    private String payload;
+    private String payloadEncrypted; // base64 of IV||ciphertext
+
+    @Column(length = 64)
+    private String payloadHash; // sha256 of plaintext payload
 
     private String timestamp;
+
+    private boolean archived = false;
+    private String archivedAt;
 
     @Column(length = 64)
     private String contentHash;
@@ -31,14 +37,20 @@ public class AuditRecord {
     @Column(length = 64)
     private String prevHash;
 
-    public AuditRecord(String eventType, String actorId, String resourceType, String resourceId, String payload, String timestamp, String contentHash, String prevHash) {
+    @Lob
+    @Column(columnDefinition = "CLOB")
+    private String encryptedKey; // base64 encrypted data key (encrypted with master key)
+
+    public AuditRecord(String eventType, String actorId, String resourceType, String resourceId, String payloadEncrypted, String payloadHash, String timestamp, String contentHash, String prevHash, String encryptedKey) {
         this.eventType = eventType;
         this.actorId = actorId;
         this.resourceType = resourceType;
         this.resourceId = resourceId;
-        this.payload = payload;
+        this.payloadEncrypted = payloadEncrypted;
+        this.payloadHash = payloadHash;
         this.timestamp = timestamp;
         this.contentHash = contentHash;
         this.prevHash = prevHash;
+        this.encryptedKey = encryptedKey;
     }
 }

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.List;
 
 @RestController
 @RequestMapping("/audit")
@@ -44,13 +45,18 @@ public class AuditController {
                                                    @RequestParam Optional<String> from,
                                                    @RequestParam Optional<String> to,
                                                    @RequestParam(defaultValue = "1") int page,
-                                                   @RequestParam(defaultValue = "50") int limit) {
+                                                   @RequestParam(defaultValue = "50") int limit,
+                                                   @RequestParam(defaultValue = "false") boolean redacted) {
         org.springframework.data.domain.Page<AuditRecord> p = svc.query(actorId, resourceType, resourceId, eventType, from, to, page, limit);
         java.util.Map<String, Object> resp = new java.util.HashMap<>();
         resp.put("total", p.getTotalElements());
         resp.put("page", page);
         resp.put("limit", limit);
-        resp.put("items", p.getContent());
+        List<AuditRecord> items = p.getContent();
+        if (redacted) {
+            items = items.stream().map(r -> svc.applyRedactionView(r)).collect(java.util.stream.Collectors.toList());
+        }
+        resp.put("items", items);
         return ResponseEntity.ok(resp);
     }
 
@@ -110,6 +116,37 @@ public class AuditController {
                 return ResponseEntity.badRequest().body(err);
         }
         return this.query(a, rt, rid, et, from, to, page, limit);
+    }
+
+    @PostMapping("/redact")
+    public ResponseEntity<?> redact(@RequestBody Map<String,Object> body) {
+        // body: { recordId: number, redactorId: string, fields: ["payload.ssn", ...] }
+        Long recordId = body.get("recordId") instanceof Number ? ((Number)body.get("recordId")).longValue() : Long.valueOf(String.valueOf(body.get("recordId")));
+        String redactorId = body.get("redactorId") == null ? null : String.valueOf(body.get("redactorId"));
+        java.util.List<String> fields = body.get("fields") == null ? java.util.Collections.emptyList() : (java.util.List<String>) body.get("fields");
+        try {
+            Object saved = svc.redactRecord(recordId, redactorId, fields);
+            return ResponseEntity.ok(saved);
+        } catch (Exception e) {
+            return ResponseEntity.status(400).body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/archive")
+    public ResponseEntity<?> archive(@RequestParam(defaultValue = "30") long days) {
+        int count = svc.archiveOlderThanDays(days);
+        return ResponseEntity.ok(java.util.Map.of("archived", count));
+    }
+
+    @GetMapping("/export")
+    public ResponseEntity<?> export(@RequestParam Optional<String> actorId,
+                                    @RequestParam Optional<String> resourceId) {
+        try {
+            java.util.Map<String,Object> bundle = svc.exportBundle(actorId, resourceId);
+            return ResponseEntity.ok(bundle);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
     }
 
     @GetMapping("/verify")
