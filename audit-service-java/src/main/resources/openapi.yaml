@@ -1,0 +1,275 @@
+openapi: 3.0.3
+info:
+  title: Audit Log Service API
+  version: 1.0.0
+  description: OpenAPI specification for the AuditController endpoints (audit events, redaction, erase, archive, export, verify).
+servers:
+  - url: http://localhost:8081
+paths:
+  /audit/events:
+    post:
+      summary: Create an audit event (append-only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditRecordView'
+        '400':
+          description: Bad request
+    get:
+      summary: Query audit events with filters and pagination
+      parameters:
+        - name: actorId
+          in: query
+          schema: { type: string }
+        - name: resourceType
+          in: query
+          schema: { type: string }
+        - name: resourceId
+          in: query
+          schema: { type: string }
+        - name: eventType
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: redacted
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Paged result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  limit: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditRecordView'
+  /audit/events/{filterField}:
+    get:
+      summary: Query by filter field (value provided as query param)
+      parameters:
+        - name: filterField
+          in: path
+          required: true
+          schema: { type: string }
+        - name: value
+          in: query
+          required: true
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200': { description: OK }
+  /audit/events/{filterField}/{value}:
+    get:
+      summary: Query by filter field and value in path
+      parameters:
+        - name: filterField
+          in: path
+          required: true
+          schema: { type: string }
+        - name: value
+          in: path
+          required: true
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+      responses:
+        '200': { description: OK }
+  /audit/redact:
+    post:
+      summary: Redact fields from a target record (creates REDACTION event and performs cryptographic erasure of key)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedactRequest'
+      responses:
+        '200':
+          description: Redaction recorded
+  /audit/erase:
+    post:
+      summary: Perform cryptographic erasure for a record (delete encryptedKey)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EraseRequest'
+      responses:
+        '200':
+          description: Erasure performed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditRecordView'
+  /audit/archive:
+    post:
+      summary: Archive records older than N days (soft-delete)
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 30 }
+      responses:
+        '200':
+          description: Number archived
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  archived: { type: integer }
+  /audit/export:
+    get:
+      summary: Export all records for an actorId or resourceId as a verifiable bundle
+      parameters:
+        - name: actorId
+          in: query
+          schema: { type: string }
+        - name: resourceId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Export bundle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportBundle'
+  /audit/verify:
+    get:
+      summary: Verify the integrity of the audit chain
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResult'
+components:
+  schemas:
+    CreateEventRequest:
+      type: object
+      required: [eventType, actorId, resourceType, resourceId]
+      properties:
+        eventType: { type: string }
+        actorId: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        timestamp: { type: string, format: date-time }
+    AuditRecordView:
+      type: object
+      properties:
+        id: { type: integer }
+        eventType: { type: string }
+        actorId: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        payloadHash: { type: string }
+        payloadAvailable: { type: boolean }
+        payload: { type: object, additionalProperties: true }
+        timestamp: { type: string }
+        contentHash: { type: string }
+        prevHash: { type: string }
+        archived: { type: boolean }
+        archivedAt: { type: string }
+    RedactRequest:
+      type: object
+      required: [recordId]
+      properties:
+        recordId: { type: integer }
+        redactorId: { type: string }
+        fields:
+          type: array
+          items: { type: string }
+    EraseRequest:
+      type: object
+      required: [recordId]
+      properties:
+        recordId: { type: integer }
+        eraserId: { type: string }
+    ExportBundle:
+      type: object
+      properties:
+        exportedAt: { type: string }
+        records:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              eventType: { type: string }
+              actorId: { type: string }
+              resourceType: { type: string }
+              resourceId: { type: string }
+              payloadHash: { type: string }
+              payloadAvailable: { type: boolean }
+              timestamp: { type: string }
+              contentHash: { type: string }
+              prevHash: { type: string }
+              archived: { type: boolean }
+              archivedAt: { type: string }
+        chain:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              contentHash: { type: string }
+              prevHash: { type: string }
+    VerificationResult:
+      type: object
+      properties:
+        intact: { type: boolean }
+        firstBrokenIndex: { type: integer, nullable: true }
+        reason: { type: string, nullable: true }
+        recordId: { type: integer, nullable: true }

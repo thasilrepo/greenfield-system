@@ -28,7 +28,7 @@ public class AuditRecord {
 
     private String timestamp;
 
-    private boolean archived = false;
+    private Boolean archived = Boolean.FALSE;
     private String archivedAt;
 
     @Column(length = 64)

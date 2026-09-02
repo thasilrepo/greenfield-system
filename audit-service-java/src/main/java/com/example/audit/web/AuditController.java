@@ -37,7 +37,7 @@ public class AuditController {
         m.put("timestamp", r.getTimestamp());
         m.put("contentHash", r.getContentHash());
         m.put("prevHash", r.getPrevHash());
-        m.put("archived", r.isArchived());
+        m.put("archived", Boolean.TRUE.equals(r.getArchived()));
         m.put("archivedAt", r.getArchivedAt());
         if (includePayload) {
             try {

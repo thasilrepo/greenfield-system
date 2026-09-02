@@ -218,8 +218,8 @@ public class AuditService {
             try {
                 if (r.getTimestamp() == null) continue;
                 Instant its = Instant.parse(r.getTimestamp());
-                if (its.isBefore(cutoff) && !r.isArchived()) {
-                    r.setArchived(true);
+                if (its.isBefore(cutoff) && !Boolean.TRUE.equals(r.getArchived())) {
+                    r.setArchived(Boolean.TRUE);
                     r.setArchivedAt(Instant.now().toString());
                     repo.save(r);
                     count++;
@@ -287,7 +287,7 @@ public class AuditService {
             m.put("timestamp", r.getTimestamp());
             m.put("contentHash", r.getContentHash());
             m.put("prevHash", r.getPrevHash());
-            m.put("archived", r.isArchived());
+            m.put("archived", Boolean.TRUE.equals(r.getArchived()));
             m.put("archivedAt", r.getArchivedAt());
             return m;
         }).collect(Collectors.toList());
