@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+# ----------------------------------------------------------------------------
+# Maven Wrapper
+# ----------------------------------------------------------------------------
+set -e
+# Resolve basedir
+PRG="$0"
+while [ -h "$PRG" ] ; do
+  ls=`ls -ld "$PRG"`
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG=`dirname "$PRG"`"/"$link
+  fi
+done
+BASEDIR=`dirname "$PRG"`
+BASEDIR=`cd "$BASEDIR" && pwd`
+
+# Wrapper files
+WRAPPER_DIR="$BASEDIR/.mvn/wrapper"
+WRAPPER_JAR="$WRAPPER_DIR/maven-wrapper.jar"
+WRAPPER_PROPS="$WRAPPER_DIR/maven-wrapper.properties"
+
+if [ ! -f "$WRAPPER_JAR" ]; then
+  echo "Maven wrapper JAR not found in $WRAPPER_JAR"
+  echo "To bootstrap the wrapper, run: mvn -N io.takari:maven:wrapper"
+  exit 1
+fi
+
+java -jar "$WRAPPER_JAR" "$@"
