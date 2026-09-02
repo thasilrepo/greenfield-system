@@ -29,11 +29,10 @@ public class AuditController {
         String resourceId = (String) body.get("resourceId");
         Map<String, Object> payload = (Map<String, Object>) body.get("payload");
         String tsStr = (String) body.get("timestamp");
-        Instant ts = tsStr == null ? null : Instant.parse(tsStr);
         if (eventType == null || actorId == null || resourceType == null || resourceId == null) {
             return ResponseEntity.badRequest().build();
         }
-        AuditRecord rec = svc.append(eventType, actorId, resourceType, resourceId, payload, ts);
+        AuditRecord rec = svc.append(eventType, actorId, resourceType, resourceId, payload, tsStr);
         return ResponseEntity.status(201).body(rec);
     }
 

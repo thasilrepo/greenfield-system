@@ -19,7 +19,7 @@ public class AuditRecord {
     @Column(columnDefinition = "CLOB")
     private String payload;
 
-    private Instant timestamp;
+    private String timestamp;
 
     @Column(length = 64)
     private String contentHash;
@@ -29,7 +29,7 @@ public class AuditRecord {
 
     public AuditRecord() {}
 
-    public AuditRecord(String eventType, String actorId, String resourceType, String resourceId, String payload, Instant timestamp, String contentHash, String prevHash) {
+    public AuditRecord(String eventType, String actorId, String resourceType, String resourceId, String payload, String timestamp, String contentHash, String prevHash) {
         this.eventType = eventType;
         this.actorId = actorId;
         this.resourceType = resourceType;
@@ -53,8 +53,8 @@ public class AuditRecord {
     public void setResourceId(String resourceId) { this.resourceId = resourceId; }
     public String getPayload() { return payload; }
     public void setPayload(String payload) { this.payload = payload; }
-    public Instant getTimestamp() { return timestamp; }
-    public void setTimestamp(Instant timestamp) { this.timestamp = timestamp; }
+    public String getTimestamp() { return timestamp; }
+    public void setTimestamp(String timestamp) { this.timestamp = timestamp; }
     public String getContentHash() { return contentHash; }
     public void setContentHash(String contentHash) { this.contentHash = contentHash; }
     public String getPrevHash() { return prevHash; }

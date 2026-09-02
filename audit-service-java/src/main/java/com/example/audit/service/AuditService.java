@@ -43,8 +43,8 @@ public class AuditService {
         }
     }
 
-    public AuditRecord append(String eventType, String actorId, String resourceType, String resourceId, Map<String, Object> payload, Instant timestamp) {
-        Instant ts = Optional.ofNullable(timestamp).orElse(Instant.now());
+    public AuditRecord append(String eventType, String actorId, String resourceType, String resourceId, Map<String, Object> payload, String timestamp) {
+        String ts = Optional.ofNullable(timestamp).orElse(Instant.now().toString());
         try {
             // stable serialization of content
             Map<String, Object> content = new LinkedHashMap<>();
@@ -53,7 +53,7 @@ public class AuditService {
             content.put("resourceType", resourceType);
             content.put("resourceId", resourceId);
             content.put("payload", payload);
-            content.put("timestamp", ts.toString());
+            content.put("timestamp", ts);
             String contentJson = mapper.writeValueAsString(content);
             String contentHash = sha256(contentJson);
             String prevHash = Optional.ofNullable(repo.findTopByOrderByIdDesc()).map(AuditRecord::getContentHash).orElse(GENESIS);
@@ -71,8 +71,9 @@ public class AuditService {
             resourceType.ifPresent(r -> preds.add(cb.equal(root.get("resourceType"), r)));
             resourceId.ifPresent(rid -> preds.add(cb.equal(root.get("resourceId"), rid)));
             eventType.ifPresent(e -> preds.add(cb.equal(root.get("eventType"), e)));
-            from.ifPresent(f -> preds.add(cb.greaterThanOrEqualTo(root.get("timestamp"), Instant.parse(f))));
-            to.ifPresent(t -> preds.add(cb.lessThanOrEqualTo(root.get("timestamp"), Instant.parse(t))));
+            // timestamp stored as ISO-8601 string -> lexicographic compare is valid for same format
+            from.ifPresent(f -> preds.add(cb.greaterThanOrEqualTo(root.get("timestamp"), f)));
+            to.ifPresent(t -> preds.add(cb.lessThanOrEqualTo(root.get("timestamp"), t)));
             return cb.and(preds.toArray(new Predicate[0]));
         };
         return repo.findAll(spec, PageRequest.of(Math.max(0, page - 1), Math.max(1, Math.min(100, limit)), Sort.by("id")));
