@@ -15,6 +15,7 @@
 
   <properties>
     <java.version>17</java.version>
+    <surefireArgLine></surefireArgLine>
   </properties>
 
   <dependencies>
@@ -96,9 +97,13 @@
         <version>0.8.10</version>
         <executions>
           <execution>
+            <id>prepare-agent</id>
             <goals>
               <goal>prepare-agent</goal>
             </goals>
+            <configuration>
+              <propertyName>surefireArgLine</propertyName>
+            </configuration>
           </execution>
           <execution>
             <id>report</id>
@@ -108,6 +113,14 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.0.0</version>
+        <configuration>
+          <argLine>-Xms256m -Xmx768m -XX:+UseSerialGC -Xss256k ${surefireArgLine}</argLine>
+        </configuration>
       </plugin>
     </plugins>
   </build>
