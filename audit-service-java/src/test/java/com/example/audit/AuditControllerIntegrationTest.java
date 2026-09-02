@@ -1,0 +1,127 @@
+package com.example.audit;
+
+import com.example.audit.model.AuditRecord;
+import com.example.audit.repo.AuditRecordRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.*;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+public class AuditControllerIntegrationTest {
+
+    @Autowired
+    private TestRestTemplate rest;
+
+    @Autowired
+    private AuditRecordRepository repo;
+
+    @BeforeEach
+    public void beforeEach() {
+        repo.deleteAll();
+    }
+
+    @Test
+    public void testCreateEvent_success_and_verify_chain() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("eventType", "USER_LOGIN");
+        body.put("actorId", "user-1");
+        body.put("resourceType", "session");
+        body.put("resourceId", "s1");
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("ip", "1.2.3.4");
+        body.put("payload", payload);
+
+        ResponseEntity<AuditRecord> r = rest.postForEntity("/audit/events", body, AuditRecord.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        AuditRecord rec = r.getBody();
+        assertThat(rec).isNotNull();
+        assertThat(rec.getId()).isNotNull();
+        assertThat(rec.getContentHash()).isNotNull();
+        assertThat(rec.getPrevHash()).isNotNull();
+        // verify chain endpoint
+        ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);
+        assertThat(v.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> m = v.getBody();
+        assertThat(m).isNotNull();
+        assertThat(m.get("intact")).isEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    public void testCreateEvent_missingFields_negative() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("eventType", "USER_LOGIN");
+        // missing actorId
+        body.put("resourceType", "session");
+        body.put("resourceId", "s1");
+
+        ResponseEntity<String> r = rest.postForEntity("/audit/events", body, String.class);
+        assertThat(r.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    public void testQueryFilters_and_pagination() {
+        // create 3 events
+        for (int i = 1; i <= 3; i++) {
+            Map<String, Object> b = new HashMap<>();
+            b.put("eventType", i % 2 == 0 ? "RECORD_UPDATED" : "USER_LOGIN");
+            b.put("actorId", "actor-" + (i%2));
+            b.put("resourceType", "order");
+            b.put("resourceId", "order-1");
+            rest.postForEntity("/audit/events", b, AuditRecord.class);
+        }
+        // query actorId=actor-1
+        ResponseEntity<Map> resp = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=1", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> body = resp.getBody();
+        assertThat(body.get("total")).isNotNull();
+        assertThat(((List<?>) body.get("items")).size()).isLessThanOrEqualTo(2);
+
+        // page 2
+        ResponseEntity<Map> resp2 = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=2", Map.class);
+        assertThat(resp2.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    public void testVerifyChain_detects_tamper() throws Exception {
+        // create two events
+        Map<String, Object> b1 = new HashMap<>();
+        b1.put("eventType", "USER_LOGIN");
+        b1.put("actorId", "u1");
+        b1.put("resourceType", "session");
+        b1.put("resourceId", "s1");
+        rest.postForEntity("/audit/events", b1, AuditRecord.class);
+
+        Map<String, Object> b2 = new HashMap<>();
+        b2.put("eventType", "RECORD_UPDATED");
+        b2.put("actorId", "u2");
+        b2.put("resourceType", "order");
+        b2.put("resourceId", "o1");
+        rest.postForEntity("/audit/events", b2, AuditRecord.class);
+
+        List<AuditRecord> all = repo.findAll();
+        assertThat(all.size()).isEqualTo(2);
+        AuditRecord first = all.get(0);
+        // tamper with payload directly
+        first.setPayload("{\"tampered\":true}");
+        repo.save(first);
+
+        ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);
+        assertThat(v.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> m = v.getBody();
+        assertThat(m).isNotNull();
+        assertThat(m.get("intact")).isEqualTo(Boolean.FALSE);
+        assertThat(m.get("reason")).isEqualTo("content_hash_mismatch");
+        assertThat(((Number)m.get("recordId")).longValue()).isEqualTo(first.getId().longValue());
+    }
+}
