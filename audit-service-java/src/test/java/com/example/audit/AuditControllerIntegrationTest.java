@@ -42,7 +42,7 @@ public class AuditControllerIntegrationTest {
         payload.put("ip", "1.2.3.4");
         body.put("payload", payload);
 
-        ResponseEntity<Map> r = rest.postForEntity("/audit/events", body, Map.class);
+        ResponseEntity<Map> r = rest.withBasicAuth("user","userpass").postForEntity("/audit/events", body, Map.class);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         Map<?,?> rec = r.getBody();
         assertThat(rec).isNotNull();
@@ -50,7 +50,7 @@ public class AuditControllerIntegrationTest {
         assertThat(rec.get("contentHash")).isNotNull();
         assertThat(rec.get("prevHash")).isNotNull();
         // verify chain endpoint
-        ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);
+        ResponseEntity<Map> v = rest.withBasicAuth("user","userpass").getForEntity("/audit/verify", Map.class);
         assertThat(v.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> m = v.getBody();
         assertThat(m).isNotNull();
@@ -65,7 +65,7 @@ public class AuditControllerIntegrationTest {
         body.put("resourceType", "session");
         body.put("resourceId", "s1");
 
-        ResponseEntity<String> r = rest.postForEntity("/audit/events", body, String.class);
+        ResponseEntity<String> r = rest.withBasicAuth("user","userpass").postForEntity("/audit/events", body, String.class);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
@@ -78,10 +78,10 @@ public class AuditControllerIntegrationTest {
             b.put("actorId", "actor-" + (i%2));
             b.put("resourceType", "order");
             b.put("resourceId", "order-1");
-            rest.postForEntity("/audit/events", b, Map.class);
+            rest.withBasicAuth("user","userpass").postForEntity("/audit/events", b, Map.class);
         }
         // query actorId=actor-1 using query param
-        ResponseEntity<Map> resp = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=1", Map.class);
+        ResponseEntity<Map> resp = rest.withBasicAuth("user","userpass").getForEntity("/audit/events?actorId=actor-1&limit=2&page=1", Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> body = resp.getBody();
         assertThat(body).isNotNull();
@@ -89,7 +89,7 @@ public class AuditControllerIntegrationTest {
         assertThat(((List<?>) body.get("items")).size()).isLessThanOrEqualTo(2);
 
         // page 2
-        ResponseEntity<Map> resp2 = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=2", Map.class);
+        ResponseEntity<Map> resp2 = rest.withBasicAuth("user","userpass").getForEntity("/audit/events?actorId=actor-1&limit=2&page=2", Map.class);
         assertThat(resp2.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
@@ -102,11 +102,11 @@ public class AuditControllerIntegrationTest {
             b.put("actorId", "actor-" + (i%2));
             b.put("resourceType", "order");
             b.put("resourceId", "order-1");
-            rest.postForEntity("/audit/events", b, Map.class);
+            rest.withBasicAuth("user","userpass").postForEntity("/audit/events", b, Map.class);
         }
 
         // use path-style filter endpoint (query param version)
-        ResponseEntity<Map> resp = rest.getForEntity("/audit/events/actorId?value=actor-1&limit=2&page=1", Map.class);
+        ResponseEntity<Map> resp = rest.withBasicAuth("user","userpass").getForEntity("/audit/events/actorId?value=actor-1&limit=2&page=1", Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> body = resp.getBody();
         assertThat(body).isNotNull();
@@ -114,7 +114,7 @@ public class AuditControllerIntegrationTest {
         assertThat(((List<?>) body.get("items")).size()).isLessThanOrEqualTo(2);
 
         // use path-style filter endpoint (path param version)
-        ResponseEntity<Map> respPath = rest.getForEntity("/audit/events/actorId/actor-1?limit=2&page=1", Map.class);
+        ResponseEntity<Map> respPath = rest.withBasicAuth("user","userpass").getForEntity("/audit/events/actorId/actor-1?limit=2&page=1", Map.class);
         assertThat(respPath.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> body2 = respPath.getBody();
         assertThat(body2).isNotNull();
@@ -130,14 +130,14 @@ public class AuditControllerIntegrationTest {
         b1.put("actorId", "u1");
         b1.put("resourceType", "session");
         b1.put("resourceId", "s1");
-        rest.postForEntity("/audit/events", b1, Map.class);
+        rest.withBasicAuth("user","userpass").postForEntity("/audit/events", b1, Map.class);
 
         Map<String, Object> b2 = new HashMap<>();
         b2.put("eventType", "RECORD_UPDATED");
         b2.put("actorId", "u2");
         b2.put("resourceType", "order");
         b2.put("resourceId", "o1");
-        rest.postForEntity("/audit/events", b2, Map.class);
+        rest.withBasicAuth("user","userpass").postForEntity("/audit/events", b2, Map.class);
 
         List<AuditRecord> all = repo.findAll();
         assertThat(all.size()).isEqualTo(2);
@@ -146,7 +146,7 @@ public class AuditControllerIntegrationTest {
         first.setContentHash("invalidtamper");
         repo.save(first);
 
-        ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);
+        ResponseEntity<Map> v = rest.withBasicAuth("user","userpass").getForEntity("/audit/verify", Map.class);
         assertThat(v.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> m = v.getBody();
         assertThat(m).isNotNull();
@@ -166,7 +166,7 @@ public class AuditControllerIntegrationTest {
         payload.put("secret", "top-secret");
         body.put("payload", payload);
 
-        ResponseEntity<Map> created = rest.postForEntity("/audit/events", body, Map.class);
+        ResponseEntity<Map> created = rest.withBasicAuth("user","userpass").postForEntity("/audit/events", body, Map.class);
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         Map<?,?> recMap = created.getBody();
         assertThat(recMap).isNotNull();
@@ -180,7 +180,7 @@ public class AuditControllerIntegrationTest {
         Map<String,Object> eraseReq = new HashMap<>();
         eraseReq.put("recordId", id);
         eraseReq.put("eraserId", "tester");
-        ResponseEntity<Map> er = rest.postForEntity("/audit/erase", eraseReq, Map.class);
+        ResponseEntity<Map> er = rest.withBasicAuth("admin","adminpass").postForEntity("/audit/erase", eraseReq, Map.class);
         assertThat(er.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> erBody = er.getBody();
         assertThat(erBody).isNotNull();
