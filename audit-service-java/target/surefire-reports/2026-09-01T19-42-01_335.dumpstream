@@ -1,5 +1,0 @@
-# Created at 2026-09-01T19:42:01.581
-Boot Manifest-JAR contains absolute paths in classpath 'D:\thasil\greenfield-system\audit-service-java\target\test-classes'
-Hint: <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
-'other' has different root
-
