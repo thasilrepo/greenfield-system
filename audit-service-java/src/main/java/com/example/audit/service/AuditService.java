@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.LinkedHashMap;
 
 @Service
 public class AuditService {
@@ -46,14 +47,13 @@ public class AuditService {
         Instant ts = Optional.ofNullable(timestamp).orElse(Instant.now());
         try {
             // stable serialization of content
-            Map<String, Object> content = Map.of(
-                    "eventType", eventType,
-                    "actorId", actorId,
-                    "resourceType", resourceType,
-                    "resourceId", resourceId,
-                    "payload", payload,
-                    "timestamp", ts.toString()
-            );
+            Map<String, Object> content = new LinkedHashMap<>();
+            content.put("eventType", eventType);
+            content.put("actorId", actorId);
+            content.put("resourceType", resourceType);
+            content.put("resourceId", resourceId);
+            content.put("payload", payload);
+            content.put("timestamp", ts.toString());
             String contentJson = mapper.writeValueAsString(content);
             String contentHash = sha256(contentJson);
             String prevHash = Optional.ofNullable(repo.findTopByOrderByIdDesc()).map(AuditRecord::getContentHash).orElse(GENESIS);
@@ -84,14 +84,14 @@ public class AuditService {
         for (int i = 0; i < all.size(); i++) {
             AuditRecord r = all.get(i);
             try {
-                Map<String, Object> content = Map.of(
-                        "eventType", r.getEventType(),
-                        "actorId", r.getActorId(),
-                        "resourceType", r.getResourceType(),
-                        "resourceId", r.getResourceId(),
-                        "payload", r.getPayload() == null ? null : mapper.readValue(r.getPayload(), Map.class),
-                        "timestamp", r.getTimestamp().toString()
-                );
+                Map<String, Object> content = new LinkedHashMap<>();
+                Object payloadObj = r.getPayload() == null ? null : mapper.readValue(r.getPayload(), Map.class);
+                content.put("eventType", r.getEventType());
+                content.put("actorId", r.getActorId());
+                content.put("resourceType", r.getResourceType());
+                content.put("resourceId", r.getResourceId());
+                content.put("payload", payloadObj);
+                content.put("timestamp", r.getTimestamp().toString());
                 String computed = sha256(mapper.writeValueAsString(content));
                 if (!computed.equals(r.getContentHash())) {
                     return new VerificationResult(false, i, "content_hash_mismatch", r.getId());
