@@ -8,7 +8,7 @@ This repository is created for the purpose of an interview exercise.
 - **Email Address:** thasilmohamed641@gmail.com
 - **Assignment Title:** Build an AI-Assisted Software Engineering System — Audit Log Service
 - **Assignment Start Date:** 9/1/2026
-- **Assignment Submission Date:** 9/1/2026
+- **Assignment Submission Date:** 9/2/2026
 
 ---
 
