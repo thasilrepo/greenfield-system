@@ -71,6 +71,11 @@ public class AuditService {
         try {
             if (base64 != null && !base64.isBlank()) return Base64.getDecoder().decode(base64);
         } catch (Exception e) { /* ignore */ }
+        // also check environment variable AUDIT_MASTER_KEY for convenience
+        try {
+            String envVal = System.getenv("AUDIT_MASTER_KEY");
+            if (envVal != null && !envVal.isBlank()) return Base64.getDecoder().decode(envVal);
+        } catch (Exception e) { /* ignore */ }
         // generate transient master key (WARNING: ephemeral, will not survive restart)
         byte[] k = new byte[32];
         secureRandom.nextBytes(k);
@@ -184,6 +189,25 @@ public class AuditService {
 
     public List<RedactionRecord> listRedactionsForRecord(Long recordId) {
         return redactionRepo.findByTargetRecordIdOrderByIdDesc(recordId);
+    }
+
+    @Transactional
+    public AuditRecord eraseRecord(Long recordId, String eraserId) {
+        try {
+            AuditRecord target = repo.findById(recordId).orElseThrow(() -> new IllegalArgumentException("record not found"));
+            String origHash = target.getPayloadHash();
+            // remove encrypted key to perform cryptographic erasure (payload becomes irrecoverable)
+            target.setEncryptedKey(null);
+            repo.save(target);
+            // append an audit event describing the erasure
+            Map<String,Object> payload = new HashMap<>();
+            payload.put("targetRecordId", recordId);
+            payload.put("originalPayloadHash", origHash);
+            this.append("ERASE", eraserId != null ? eraserId : "system", "erasure", String.valueOf(recordId), payload, Instant.now().toString());
+            return target;
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public int archiveOlderThanDays(long days) {

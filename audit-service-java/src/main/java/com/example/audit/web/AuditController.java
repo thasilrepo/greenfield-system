@@ -8,6 +8,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -18,12 +20,47 @@ import java.util.List;
 public class AuditController {
 
     private final AuditService svc;
+    private final ObjectMapper mapper = new ObjectMapper().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
 
     @Autowired
     public AuditController(AuditService svc) { this.svc = svc; }
 
+    private Map<String,Object> safeRecordView(AuditRecord r, boolean includePayload) {
+        java.util.Map<String,Object> m = new java.util.HashMap<>();
+        m.put("id", r.getId());
+        m.put("eventType", r.getEventType());
+        m.put("actorId", r.getActorId());
+        m.put("resourceType", r.getResourceType());
+        m.put("resourceId", r.getResourceId());
+        m.put("payloadHash", r.getPayloadHash());
+        m.put("payloadAvailable", r.getEncryptedKey() != null && r.getPayloadEncrypted() != null);
+        m.put("timestamp", r.getTimestamp());
+        m.put("contentHash", r.getContentHash());
+        m.put("prevHash", r.getPrevHash());
+        m.put("archived", r.isArchived());
+        m.put("archivedAt", r.getArchivedAt());
+        if (includePayload) {
+            try {
+                if (r.getPayloadEncrypted() == null) m.put("payload", null);
+                else {
+                    // payloadEncrypted may contain plaintext when produced by applyRedactionView
+                    String s = r.getPayloadEncrypted();
+                    try {
+                        Object obj = mapper.readValue(s, Map.class);
+                        m.put("payload", obj);
+                    } catch (Exception ex) {
+                        m.put("payload", s);
+                    }
+                }
+            } catch (Exception ee) {
+                m.put("payload", null);
+            }
+        }
+        return m;
+    }
+
     @PostMapping("/events")
-    public ResponseEntity<AuditRecord> create(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> create(@RequestBody Map<String, Object> body) {
         String eventType = (String) body.get("eventType");
         String actorId = (String) body.get("actorId");
         String resourceType = (String) body.get("resourceType");
@@ -34,7 +71,7 @@ public class AuditController {
             return ResponseEntity.badRequest().build();
         }
         AuditRecord rec = svc.append(eventType, actorId, resourceType, resourceId, payload, tsStr);
-        return ResponseEntity.status(201).body(rec);
+        return ResponseEntity.status(201).body(safeRecordView(rec, false));
     }
 
     @GetMapping("/events")
@@ -52,10 +89,10 @@ public class AuditController {
         resp.put("total", p.getTotalElements());
         resp.put("page", page);
         resp.put("limit", limit);
-        List<AuditRecord> items = p.getContent();
-        if (redacted) {
-            items = items.stream().map(r -> svc.applyRedactionView(r)).collect(java.util.stream.Collectors.toList());
-        }
+        List<Map<String,Object>> items = p.getContent().stream().map(r -> {
+            AuditRecord view = redacted ? svc.applyRedactionView(r) : r;
+            return safeRecordView(view, redacted);
+        }).collect(java.util.stream.Collectors.toList());
         resp.put("items", items);
         return ResponseEntity.ok(resp);
     }
@@ -115,7 +152,7 @@ public class AuditController {
                 err.put("supported", java.util.List.of("actorId","eventType","resourceType","resourceId","resource"));
                 return ResponseEntity.badRequest().body(err);
         }
-        return this.query(a, rt, rid, et, from, to, page, limit);
+        return this.query(a, rt, rid, et, from, to, page, limit, false);
     }
 
     @PostMapping("/redact")
@@ -127,6 +164,19 @@ public class AuditController {
         try {
             Object saved = svc.redactRecord(recordId, redactorId, fields);
             return ResponseEntity.ok(saved);
+        } catch (Exception e) {
+            return ResponseEntity.status(400).body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/erase")
+    public ResponseEntity<?> erase(@RequestBody Map<String,Object> body) {
+        // body: { recordId: number, eraserId: string }
+        Long recordId = body.get("recordId") instanceof Number ? ((Number)body.get("recordId")).longValue() : Long.valueOf(String.valueOf(body.get("recordId")));
+        String eraserId = body.get("eraserId") == null ? null : String.valueOf(body.get("eraserId"));
+        try {
+            AuditRecord updated = svc.eraseRecord(recordId, eraserId);
+            return ResponseEntity.ok(safeRecordView(updated, false));
         } catch (Exception e) {
             return ResponseEntity.status(400).body(java.util.Map.of("error", e.getMessage()));
         }

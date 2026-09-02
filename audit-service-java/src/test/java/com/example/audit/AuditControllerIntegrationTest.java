@@ -42,13 +42,13 @@ public class AuditControllerIntegrationTest {
         payload.put("ip", "1.2.3.4");
         body.put("payload", payload);
 
-        ResponseEntity<AuditRecord> r = rest.postForEntity("/audit/events", body, AuditRecord.class);
+        ResponseEntity<Map> r = rest.postForEntity("/audit/events", body, Map.class);
         assertThat(r.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        AuditRecord rec = r.getBody();
+        Map<?,?> rec = r.getBody();
         assertThat(rec).isNotNull();
-        assertThat(rec.getId()).isNotNull();
-        assertThat(rec.getContentHash()).isNotNull();
-        assertThat(rec.getPrevHash()).isNotNull();
+        assertThat(rec.get("id")).isNotNull();
+        assertThat(rec.get("contentHash")).isNotNull();
+        assertThat(rec.get("prevHash")).isNotNull();
         // verify chain endpoint
         ResponseEntity<Map> v = rest.getForEntity("/audit/verify", Map.class);
         assertThat(v.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -78,7 +78,7 @@ public class AuditControllerIntegrationTest {
             b.put("actorId", "actor-" + (i%2));
             b.put("resourceType", "order");
             b.put("resourceId", "order-1");
-            rest.postForEntity("/audit/events", b, AuditRecord.class);
+            rest.postForEntity("/audit/events", b, Map.class);
         }
         // query actorId=actor-1 using query param
         ResponseEntity<Map> resp = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=1", Map.class);
@@ -102,7 +102,7 @@ public class AuditControllerIntegrationTest {
             b.put("actorId", "actor-" + (i%2));
             b.put("resourceType", "order");
             b.put("resourceId", "order-1");
-            rest.postForEntity("/audit/events", b, AuditRecord.class);
+            rest.postForEntity("/audit/events", b, Map.class);
         }
 
         // use path-style filter endpoint (query param version)
@@ -130,14 +130,14 @@ public class AuditControllerIntegrationTest {
         b1.put("actorId", "u1");
         b1.put("resourceType", "session");
         b1.put("resourceId", "s1");
-        rest.postForEntity("/audit/events", b1, AuditRecord.class);
+        rest.postForEntity("/audit/events", b1, Map.class);
 
         Map<String, Object> b2 = new HashMap<>();
         b2.put("eventType", "RECORD_UPDATED");
         b2.put("actorId", "u2");
         b2.put("resourceType", "order");
         b2.put("resourceId", "o1");
-        rest.postForEntity("/audit/events", b2, AuditRecord.class);
+        rest.postForEntity("/audit/events", b2, Map.class);
 
         List<AuditRecord> all = repo.findAll();
         assertThat(all.size()).isEqualTo(2);
@@ -153,5 +153,40 @@ public class AuditControllerIntegrationTest {
         assertThat(m.get("intact")).isEqualTo(Boolean.FALSE);
         assertThat(m.get("reason")).isEqualTo("content_hash_mismatch");
         assertThat(((Number)m.get("recordId")).longValue()).isEqualTo(first.getId().longValue());
+    }
+
+    @Test
+    public void testErase_makes_payload_unavailable() throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("eventType", "USER_LOGIN");
+        body.put("actorId", "user-erase");
+        body.put("resourceType", "session");
+        body.put("resourceId", "s2");
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("secret", "top-secret");
+        body.put("payload", payload);
+
+        ResponseEntity<Map> created = rest.postForEntity("/audit/events", body, Map.class);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        Map<?,?> recMap = created.getBody();
+        assertThat(recMap).isNotNull();
+        Number idNum = (Number) recMap.get("id");
+        Long id = idNum.longValue();
+
+        AuditRecord rec = repo.findById(id).orElseThrow();
+        assertThat(rec.getEncryptedKey()).isNotNull();
+        assertThat(rec.getPayloadEncrypted()).isNotNull();
+
+        Map<String,Object> eraseReq = new HashMap<>();
+        eraseReq.put("recordId", id);
+        eraseReq.put("eraserId", "tester");
+        ResponseEntity<Map> er = rest.postForEntity("/audit/erase", eraseReq, Map.class);
+        assertThat(er.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> erBody = er.getBody();
+        assertThat(erBody).isNotNull();
+        assertThat(erBody.get("payloadAvailable")).isEqualTo(Boolean.FALSE);
+
+        AuditRecord after = repo.findById(id).orElseThrow();
+        assertThat(after.getEncryptedKey()).isNull();
     }
 }
