@@ -80,16 +80,46 @@ public class AuditControllerIntegrationTest {
             b.put("resourceId", "order-1");
             rest.postForEntity("/audit/events", b, AuditRecord.class);
         }
-        // query actorId=actor-1
+        // query actorId=actor-1 using query param
         ResponseEntity<Map> resp = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=1", Map.class);
         assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<?,?> body = resp.getBody();
+        assertThat(body).isNotNull();
         assertThat(body.get("total")).isNotNull();
         assertThat(((List<?>) body.get("items")).size()).isLessThanOrEqualTo(2);
 
         // page 2
         ResponseEntity<Map> resp2 = rest.getForEntity("/audit/events?actorId=actor-1&limit=2&page=2", Map.class);
         assertThat(resp2.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    public void testQueryByField_pathStyle() {
+        // create 3 events
+        for (int i = 1; i <= 3; i++) {
+            Map<String, Object> b = new HashMap<>();
+            b.put("eventType", i % 2 == 0 ? "RECORD_UPDATED" : "USER_LOGIN");
+            b.put("actorId", "actor-" + (i%2));
+            b.put("resourceType", "order");
+            b.put("resourceId", "order-1");
+            rest.postForEntity("/audit/events", b, AuditRecord.class);
+        }
+
+        // use path-style filter endpoint (query param version)
+        ResponseEntity<Map> resp = rest.getForEntity("/audit/events/actorId?value=actor-1&limit=2&page=1", Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> body = resp.getBody();
+        assertThat(body).isNotNull();
+        assertThat(body.get("total")).isNotNull();
+        assertThat(((List<?>) body.get("items")).size()).isLessThanOrEqualTo(2);
+
+        // use path-style filter endpoint (path param version)
+        ResponseEntity<Map> respPath = rest.getForEntity("/audit/events/actorId/actor-1?limit=2&page=1", Map.class);
+        assertThat(respPath.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?,?> body2 = respPath.getBody();
+        assertThat(body2).isNotNull();
+        assertThat(body2.get("total")).isNotNull();
+        assertThat(((List<?>) body2.get("items")).size()).isLessThanOrEqualTo(2);
     }
 
     @Test

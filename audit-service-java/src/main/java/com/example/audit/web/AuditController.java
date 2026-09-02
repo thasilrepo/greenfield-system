@@ -37,7 +37,7 @@ public class AuditController {
     }
 
     @GetMapping("/events")
-    public ResponseEntity<Page<AuditRecord>> query(@RequestParam Optional<String> actorId,
+    public ResponseEntity<?> query(@RequestParam Optional<String> actorId,
                                                    @RequestParam Optional<String> resourceType,
                                                    @RequestParam Optional<String> resourceId,
                                                    @RequestParam Optional<String> eventType,
@@ -45,8 +45,71 @@ public class AuditController {
                                                    @RequestParam Optional<String> to,
                                                    @RequestParam(defaultValue = "1") int page,
                                                    @RequestParam(defaultValue = "50") int limit) {
-        Page<AuditRecord> p = svc.query(actorId, resourceType, resourceId, eventType, from, to, page, limit);
-        return ResponseEntity.ok(p);
+        org.springframework.data.domain.Page<AuditRecord> p = svc.query(actorId, resourceType, resourceId, eventType, from, to, page, limit);
+        java.util.Map<String, Object> resp = new java.util.HashMap<>();
+        resp.put("total", p.getTotalElements());
+        resp.put("page", page);
+        resp.put("limit", limit);
+        resp.put("items", p.getContent());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/events/{filterField}")
+    public ResponseEntity<?> queryByField(@PathVariable String filterField,
+                                          @RequestParam(name = "value", required = true) String value,
+                                          @RequestParam Optional<String> from,
+                                          @RequestParam Optional<String> to,
+                                          @RequestParam(defaultValue = "1") int page,
+                                          @RequestParam(defaultValue = "50") int limit) {
+        return handleFilter(filterField, value, from, to, page, limit);
+    }
+
+    @GetMapping("/events/{filterField}/{value}")
+    public ResponseEntity<?> queryByFieldPath(@PathVariable String filterField,
+                                              @PathVariable String value,
+                                              @RequestParam Optional<String> from,
+                                              @RequestParam Optional<String> to,
+                                              @RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "50") int limit) {
+        return handleFilter(filterField, value, from, to, page, limit);
+    }
+
+    private ResponseEntity<?> handleFilter(String filterField, String value, Optional<String> from, Optional<String> to, int page, int limit) {
+        // normalize and map to query optionals
+        Optional<String> a = Optional.empty();
+        Optional<String> rt = Optional.empty();
+        Optional<String> rid = Optional.empty();
+        Optional<String> et = Optional.empty();
+        String f = filterField == null ? "" : filterField.toLowerCase();
+        switch (f) {
+            case "actorid": case "actor": case "actor_id":
+                a = Optional.of(value);
+                break;
+            case "eventtype": case "event_type": case "event":
+                et = Optional.of(value);
+                break;
+            case "resourcetype": case "resource_type": case "type":
+                rt = Optional.of(value);
+                break;
+            case "resourceid": case "resource_id": case "id":
+                rid = Optional.of(value);
+                break;
+            case "resource":
+                if (value.contains(":")) {
+                    String[] parts = value.split(":", 2);
+                    rt = Optional.of(parts[0]);
+                    rid = Optional.of(parts[1]);
+                } else {
+                    rt = Optional.of(value);
+                }
+                break;
+            default:
+                java.util.Map<String, Object> err = new java.util.HashMap<>();
+                err.put("error", "unsupported filter field");
+                err.put("supported", java.util.List.of("actorId","eventType","resourceType","resourceId","resource"));
+                return ResponseEntity.badRequest().body(err);
+        }
+        return this.query(a, rt, rid, et, from, to, page, limit);
     }
 
     @GetMapping("/verify")
