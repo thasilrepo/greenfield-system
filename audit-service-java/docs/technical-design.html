@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Audit Log Service — Technical Design & Implementation</title>
+  <style>
+    body{font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;margin:24px}
+    pre{background:#f7f7f7;padding:12px;border-radius:6px;overflow:auto}
+    code{background:#eee;padding:2px 4px;border-radius:4px}
+    h1,h2,h3{color:#222}
+    table{border-collapse:collapse;width:100%;margin:12px 0}
+    th,td{border:1px solid #ddd;padding:8px;text-align:left}
+  </style>
+</head>
+<body>
+  <h1>Audit Log Service — Technical Design & Implementation</h1>
+  <p>Generated: 2026-09-02T00:03:09-05:00</p>
+
+  <h2>Scope</h2>
+  <p>This document describes class-level design, implementation details, security considerations, and design decision rationale for the Audit Log Service implemented in the repository path <code>audit-service-java/</code>. The service provides append-only audit events, flexible querying, tamper-evidence through a hash chain, structured redaction, cryptographic erasure, retention (soft-archive), bulk export, and OpenAPI documentation with Swagger UI.</p>
+
+  <h2>High-level Architecture</h2>
+  <p>Spring Boot application (Java 17) using Spring Data JPA with H2 (runtime) for persistence. Key components:</p>
+  <ul>
+    <li>REST API layer: <code>AuditController</code></li>
+    <li>Service layer: <code>AuditService</code></li>
+    <li>Persistence: JPA entities (<code>AuditRecord</code>, <code>RedactionRecord</code>) and Spring Data repositories</li>
+    <li>Cryptography: AES-GCM per-record data keys wrapped with a master key</li>
+    <li>OpenAPI documentation served via springdoc</li>
+  </ul>
+
+  <h2>Class-by-class Implementation</h2>
+
+  <h3>1. com.example.audit.model.AuditRecord</h3>
+  <p>Location: <code>src/main/java/com/example/audit/model/AuditRecord.java</code></p>
+  <p>Role: Primary JPA entity that represents an audit event in the immutable chain.</p>
+  <h4>Key fields</h4>
+  <ul>
+    <li><code>Long id</code> — primary key (IDENTITY)</li>
+    <li><code>String eventType, actorId, resourceType, resourceId</code> — event metadata</li>
+    <li><code>String payloadEncrypted</code> — AES-GCM encrypted payload (base64 IV||ciphertext) stored as CLOB</li>
+    <li><code>String payloadHash</code> — SHA-256 hex of plaintext payload (used in chain computation)</li>
+    <li><code>String timestamp</code> — ISO-8601 timestamp string</li>
+    <li><code>Boolean archived</code> — soft-archive flag (nullable to support schema migrations)</li>
+    <li><code>String archivedAt</code> — timestamp when archived</li>
+    <li><code>String contentHash</code> — SHA-256 hex of canonicalized content used for chain linking</li>
+    <li><code>String prevHash</code> — previous contentHash link in chain</li>
+    <li><code>String encryptedKey</code> — base64 AES-GCM encryption of the per-record data key (wrapped by master key)</li>
+  </ul>
+  <h4>Notes</h4>
+  <p>contentHash is computed over a deterministic JSON map containing eventType, actorId, resourceType, resourceId, payloadHash, and timestamp. Using payloadHash (instead of plaintext) permits chain verification without requiring stored plaintext and enables cryptographic erasure.</p>
+
+  <h3>2. com.example.audit.model.RedactionRecord</h3>
+  <p>Location: <code>src/main/java/com/example/audit/model/RedactionRecord.java</code></p>
+  <p>Role: Stores structured redaction actions. Fields include:</p>
+  <ul>
+    <li><code>targetRecordId</code> — id of the record being redacted</li>
+    <li><code>redactorId</code> — who performed redaction</li>
+    <li><code>fieldsJson</code> — JSON array of dot-paths (e.g. <code>["payload.ssn"]</code>)</li>
+    <li><code>originalPayloadHash</code> — payloadHash before redaction (auditable)</li>
+    <li><code>timestamp</code></li>
+  </ul>
+  <p>Design: Redactions are stored as separate auditable records and also generate a REDACTION event appended to the chain, preserving the trace even when plaintext becomes irrecoverable via cryptographic erasure.</p>
+
+  <h3>3. com.example.audit.repo.*Repository</h3>
+  <p>Location: <code>src/main/java/com/example/audit/repo/</code></p>
+  <ul>
+    <li><code>AuditRecordRepository</code> — extends JpaRepository for AuditRecord. Custom finder: <code>findTopByOrderByIdDesc()</code> used to get latest prevHash.</li>
+    <li><code>RedactionRecordRepository</code> — extends JpaRepository with <code>findByTargetRecordIdOrderByIdDesc</code>.</li>
+  </ul>
+
+  <h3>4. com.example.audit.service.AuditService</h3>
+  <p>Location: <code>src/main/java/com/example/audit/service/AuditService.java</code></p>
+  <p>Role: Core business logic. Responsibilities:</p>
+  <ul>
+    <li>append(...) — accept event, encrypt payload with per-record data key, wrap data key with master key, compute payloadHash and contentHash, link prevHash, persist AuditRecord</li>
+    <li>query(...) — flexible filters (actorId, resourceType, resourceId, eventType, from/to) with pagination</li>
+    <li>verifyChain() — iterate all records in ID order and recompute contentHash using stored payloadHash; detect contentHash mismatch or prevHash mismatch and report first break</li>
+    <li>redactRecord(...) — create a RedactionRecord, perform cryptographic erasure of the record's encryptedKey, append REDACTION event</li>
+    <li>eraseRecord(...) — dedicated cryptographic erasure: set encryptedKey=null, append ERASE event</li>
+    <li>applyRedactionView(...) — if payload is decryptable, decrypt payload, apply field-path redaction to produce a redacted plaintext view (returned in API responses when redacted=true)</li>
+    <li>archiveOlderThanDays(...) — soft-archive by setting archived=true and archivedAt</li>
+    <li>exportBundle(...) — build a verifiable export bundle containing selected records and chain metadata (contentHash, prevHash)</li>
+  </ul>
+
+  <h4>Cryptography</h4>
+  <p>Implementation (in AuditService):</p>
+  <ul>
+    <li>AES-GCM with 12-byte IV and 128-bit tag (JCE algorithm <code>AES/GCM/NoPadding</code>).</li>
+    <li>Per-record 256-bit data key (random) encrypts payload; ciphertext stored as base64(IV||CT).</li>
+    <li>Data key is wrapped by encrypting it with the master key (AES-GCM) and saved in <code>encryptedKey</code> as base64.</li>
+    <li>payloadHash = SHA-256(hex) of plaintext payload. It's included in chain computation so verification does not require plaintext.</li>
+  </ul>
+  <h4>Master key handling</h4>
+  <p>AuditService loads master key from configuration (spring property <code>audit.master-key</code>) or environment variable <code>AUDIT_MASTER_KEY</code> (base64-encoded). If not provided, the service generates a transient 32-byte key (not suitable for prod). Production deployment should use a KMS or secrets vault and inject the base64 key to ensure recoverability across restarts.</p>
+
+  <h3>5. com.example.audit.web.AuditController</h3>
+  <p>Location: <code>src/main/java/com/example/audit/web/AuditController.java</code></p>
+  <p>Endpoints implemented:</p>
+  <ul>
+    <li>POST /audit/events — create an event (returns safe view)</li>
+    <li>GET /audit/events — query; supports redacted=true to return decrypted/redacted payloads where available</li>
+    <li>GET /audit/events/{filterField} and GET /audit/events/{filterField}/{value} — path-style filters</li>
+    <li>POST /audit/redact — structured redaction (creates REDACTION event and triggers key deletion for cryptographic erasure)</li>
+    <li>POST /audit/erase — dedicated cryptographic erasure API (deletes encryptedKey and appends ERASE event)</li>
+    <li>POST /audit/archive — soft-archive older records</li>
+    <li>GET /audit/export — export bundle for actorId or resourceId</li>
+    <li>GET /audit/verify — verify chain integrity</li>
+  </ul>
+
+  <h4>Safe API responses</h4>
+  <p>Controller intentionally avoids returning <code>encryptedKey</code> or <code>payloadEncrypted</code> in responses. Instead it returns a safe view containing <code>payloadHash</code> and <code>payloadAvailable</code>. When <code>redacted=true</code> the controller will include decrypted and redacted plaintext in the <code>payload</code> field if decryption is possible; otherwise payload will be null.</p>
+
+  <h3>6. OpenAPI / Swagger</h3>
+  <p>OpenAPI YAML produced at <code>src/main/resources/openapi.yaml</code>. Springdoc dependency (<code>springdoc-openapi-starter-webmvc-ui</code>) added; Swagger UI exposed at <code>/swagger-ui.html</code>. An <code>OpenApiConfig</code> bean provides title, version, and contact metadata.</p>
+
+  <h2>Design Decisions & Rationale</h2>
+  <h3>Hash chain uses payloadHash</h3>
+  <p>Including the SHA-256 of the plaintext payload (payloadHash) in the canonical content used to compute contentHash allows chain verification without access to plaintext. This design enables tamper-evidence even after cryptographic erasure (keys removed) while preserving privacy.</p>
+
+  <h3>Per-record data key + master key wrapping</h3>
+  <p>Using per-record data keys (wrapped by a central master key) balances confidentiality (different key per payload) and manageability (only the master key must be stored securely). Erasure is implemented by deleting the wrapped data key. Alternative approaches considered:</p>
+  <ul>
+    <li>Store plaintext payload encrypted by a single key — easier but erasure requires rotating or destroying that single key, which may affect multiple records.</li>
+    <li>Use KMS envelope encryption directly for each record — stronger key management but introduces external dependency; current implementation can be adapted to call KMS to encrypt/decrypt data keys.
+  </ul>
+
+  <h3>Redaction approach</h3>
+  <p>Two-layer redaction:</p>
+  <ol>
+    <li>Structured redaction view: when data is available, apply field-level redaction at read-time and return a redacted view. This preserves the original plaintext for audit trail when keys still exist.</li>
+    <li>Cryptographic erasure: when strong removal is required, delete the wrapped data key. The payload ciphertext remains but is unrecoverable. A REDACTION event and RedactionRecord are stored to document the action.</li>
+  </ol>
+  <p>Trade-offs: storing original ciphertext preserves chain integrity and provable non-retrievability after key deletion — but legal requests may require additional audit artifacts.</p>
+
+  <h3>Soft-archive vs hard-delete</h3>
+  <p>Records older than a configurable window are soft-archived (flag and timestamp). Archive does not remove records from the chain; verifyChain treats archived records as still part of the chain. This meets requirement that archived records do not cause false-positive chain breaks.</p>
+
+  <h2>Database & Schema Notes</h2>
+  <p>H2 is used for runtime in local/dev; file-based DB configured in main application.properties and in-memory DB for tests. The archived field was made nullable (Boolean) to ease schema migrations; applications should migrate and backfill before making it NOT NULL in production.</p>
+
+  <h2>Tests</h2>
+  <p>Integration tests added in <code>src/test/java/com/example/audit/AuditControllerIntegrationTest.java</code>:</p>
+  <ul>
+    <li>testCreateEvent_success_and_verify_chain</li>
+    <li>testCreateEvent_missingFields_negative</li>
+    <li>testQueryFilters_and_pagination</li>
+    <li>testQueryByField_pathStyle</li>
+    <li>testVerifyChain_detects_tamper</li>
+    <li>testErase_makes_payload_unavailable (new)</li>
+  </ul>
+  <p>Unit test added: <code>AuditServiceEraseTest</code> validates eraseRecord behavior directly on the service layer.</p>
+
+  <h2>Configuration</h2>
+  <ul>
+    <li><code>audit.master-key</code> (spring property) or environment variable <code>AUDIT_MASTER_KEY</code> — base64 32-byte key for wrapping data keys; if not provided an ephemeral key is generated (NOT for prod).</li>
+    <li>OpenAPI: <code>springdoc.swagger-ui.path=/swagger-ui.html</code></li>
+    <li>Database properties in <code>src/main/resources/application.properties</code></li>
+  </ul>
+
+  <h2>Security Considerations</h2>
+  <ul>
+    <li>Master key must be stored securely (KMS/vault). If lost, payloads cannot be decrypted.</li>
+    <li>Controller responses never include wrapped keys or ciphertext by default to avoid leakage.</li>
+    <li>Use TLS in transit for all API traffic.</li>
+    <li>Consider RBAC for endpoints that perform redaction or erasure (currently no auth is implemented in this repo).</li>
+    <li>Audit events for redaction/erase include original payloadHash to prove pre-redaction content existed.</li>
+  </ul>
+
+  <h2>Operational Notes</h2>
+  <ul>
+    <li>To run tests: <code>mvn -f audit-service-java test</code> (ensure AUDIT_MASTER_KEY set or accept ephemeral key).</li>
+    <li>To run app: <code>mvn -f audit-service-java spring-boot:run</code> and open <code>http://localhost:8081/swagger-ui.html</code>.</li>
+  </ul>
+
+  <h2>Limitations & Future Work</h2>
+  <ul>
+    <li>Master key management should be replaced with KMS; add automated key rotation and key-escrow mechanisms.</li>
+    <li>Add authentication/authorization (RBAC) to protect redaction/erase/archive endpoints.</li>
+    <li>Add deterministic migration scripts and ability to backfill archived flags then enforce NOT NULL constraints.</li>
+    <li>Hardening tests to simulate concurrent appends and large export bundles; performance testing under load.</li>
+    <li>Consider using per-tenant keys in a multi-tenant deployment.</li>
+  </ul>
+
+  <h2>Files of primary interest</h2>
+  <table>
+    <tr><th>Path</th><th>Purpose</th></tr>
+    <tr><td>src/main/java/com/example/audit/model/AuditRecord.java</td><td>Main entity (encrypted payload, payloadHash, contentHash, prevHash)</td></tr>
+    <tr><td>src/main/java/com/example/audit/model/RedactionRecord.java</td><td>Redaction metadata</td></tr>
+    <tr><td>src/main/java/com/example/audit/service/AuditService.java</td><td>Business logic, encryption, redaction, erasure, verification, export</td></tr>
+    <tr><td>src/main/java/com/example/audit/web/AuditController.java</td><td>HTTP API and safe response mapping</td></tr>
+    <tr><td>src/main/resources/openapi.yaml</td><td>OpenAPI spec</td></tr>
+    <tr><td>src/main/java/com/example/audit/config/OpenApiConfig.java</td><td>OpenAPI metadata bean</td></tr>
+    <tr><td>src/test/java/com/example/audit/*</td><td>Integration and unit tests</td></tr>
+  </table>
+
+  <h2>Appendix: Canonical content used for contentHash</h2>
+  <pre><code>{
+  "eventType": "...",
+  "actorId": "...",
+  "resourceType": "...",
+  "resourceId": "...",
+  "payload": "<payloadHash (sha256 hex) or null>",
+  "timestamp": "ISO-8601 string"
+}</code></pre>
+
+  <h2>Contact</h2>
+  <p>Author: Thasil Mohamed — &lt;thasilmohamed641@gmail.com&gt;</p>
+
+</body>
+</html>
