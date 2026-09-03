@@ -33,7 +33,11 @@ public class AuditController {
         m.put("resourceType", r.getResourceType());
         m.put("resourceId", r.getResourceId());
         m.put("payloadHash", r.getPayloadHash());
-        m.put("payloadAvailable", r.getEncryptedKey() != null && r.getPayloadEncrypted() != null);
+        try {
+            m.put("payloadAvailable", r.getEncryptedKey() != null && r.getPayloadEncrypted() != null);
+        } catch (Exception ex) {
+            m.put("payloadAvailable", false);
+        }
         m.put("timestamp", r.getTimestamp());
         m.put("contentHash", r.getContentHash());
         m.put("prevHash", r.getPrevHash());
@@ -41,15 +45,15 @@ public class AuditController {
         m.put("archivedAt", r.getArchivedAt());
         if (includePayload) {
             try {
-                if (r.getPayloadEncrypted() == null) m.put("payload", null);
+                String payloadEncrypted = r.getPayloadEncrypted();
+                if (payloadEncrypted == null) m.put("payload", null);
                 else {
                     // payloadEncrypted may contain plaintext when produced by applyRedactionView
-                    String s = r.getPayloadEncrypted();
                     try {
-                        Object obj = mapper.readValue(s, Map.class);
+                        Object obj = mapper.readValue(payloadEncrypted, Map.class);
                         m.put("payload", obj);
                     } catch (Exception ex) {
-                        m.put("payload", s);
+                        m.put("payload", payloadEncrypted);
                     }
                 }
             } catch (Exception ee) {
