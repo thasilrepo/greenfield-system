@@ -1,14 +1,21 @@
 package com.example.audit.web;
 
+import com.example.audit.config.JwtAuthenticationEntryPoint;
+import com.example.audit.config.JwtAuthenticationFilter;
 import com.example.audit.model.AuditRecord;
 import com.example.audit.service.AuditService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.*;
 
@@ -21,7 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AuditController.class)
-@org.springframework.context.annotation.Import(com.example.audit.config.SecurityConfig.class)
+@AutoConfigureMockMvc(addFilters = false)
 public class AuditControllerFullCoverageTest {
 
     @Autowired
@@ -29,6 +36,12 @@ public class AuditControllerFullCoverageTest {
 
     @MockBean
     private AuditService svc;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
     @Test
     void createSuccessAndBadRequest() throws Exception {
@@ -161,6 +174,79 @@ public class AuditControllerFullCoverageTest {
         mvc.perform(get("/audit/export").with(httpBasic("admin","adminpass")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
+    void safeRecordView_handles_exceptions_in_payload_read() throws Exception {
+        AuditController controller = new AuditController(svc);
+        AuditRecord badRecord = org.mockito.Mockito.mock(AuditRecord.class);
+        when(badRecord.getId()).thenReturn(77L);
+        when(badRecord.getEventType()).thenReturn("LOGIN");
+        when(badRecord.getActorId()).thenReturn("actor-77");
+        when(badRecord.getResourceType()).thenReturn("session");
+        when(badRecord.getResourceId()).thenReturn("sess-77");
+        when(badRecord.getPayloadHash()).thenReturn("hash-77");
+        when(badRecord.getEncryptedKey()).thenReturn("key-77");
+        when(badRecord.getPayloadEncrypted()).thenThrow(new RuntimeException("forced exception"));
+        when(badRecord.getTimestamp()).thenReturn("2026-09-02T00:00:00Z");
+        when(badRecord.getContentHash()).thenReturn("content-hash-77");
+        when(badRecord.getPrevHash()).thenReturn("prev-hash-77");
+        when(badRecord.getArchived()).thenReturn(Boolean.FALSE);
+        when(badRecord.getArchivedAt()).thenReturn(null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> view = (Map<String, Object>) ReflectionTestUtils.invokeMethod(controller, "safeRecordView", badRecord, true);
+
+        assertThat(view).isNotNull();
+        assertThat(view.get("payload")).isNull();
+        assertThat(view.get("payloadAvailable")).isEqualTo(Boolean.FALSE);
+    }
+
+    @Test
+    void handleFilter_maps_supported_fields_and_rejects_unsupported() throws Exception {
+        AuditController controller = new AuditController(svc);
+        when(svc.query(any(), any(), any(), any(), any(), any(), anyInt(), anyInt())).thenReturn(new PageImpl<>(List.of()));
+
+        ResponseEntity<?> actor = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "actorId", "a", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(actor.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.OK);
+
+        ResponseEntity<?> event = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "eventType", "e", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(event.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.OK);
+
+        ResponseEntity<?> resourceType = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "resourceType", "t", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(resourceType.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.OK);
+
+        ResponseEntity<?> resourceId = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "resourceId", "r", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(resourceId.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.OK);
+
+        ResponseEntity<?> resource = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "resource", "kind:rid", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(resource.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.OK);
+
+        ResponseEntity<?> unsupported = ReflectionTestUtils.invokeMethod(controller, "handleFilter", "unknown", "x", Optional.empty(), Optional.empty(), 1, 10);
+        assertThat(unsupported.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+        assertThat(((Map<?, ?>) unsupported.getBody()).get("error")).isEqualTo("unsupported filter field");
+    }
+
+    @Test
+    void redact_and_erase_bad_requests_are_returned() throws Exception {
+        AuditController controller = new AuditController(svc);
+        when(svc.redactRecord(eq(9L), any(), any())).thenThrow(new RuntimeException("bad redact"));
+
+        Map<String, Object> badRedact = new HashMap<>();
+        badRedact.put("recordId", 9L);
+        badRedact.put("redactorId", "r");
+        badRedact.put("fields", List.of("payload.ssn"));
+        ResponseEntity<?> redactResp = controller.redact(badRedact);
+        assertThat(redactResp.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+        assertThat(((Map<?, ?>) redactResp.getBody()).get("error")).isEqualTo("bad redact");
+
+        when(svc.eraseRecord(eq(10L), any())).thenThrow(new RuntimeException("bad erase"));
+        Map<String, Object> badErase = new HashMap<>();
+        badErase.put("recordId", 10L);
+        badErase.put("eraserId", "e");
+        ResponseEntity<?> eraseResp = controller.erase(badErase);
+        assertThat(eraseResp.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+        assertThat(((Map<?, ?>) eraseResp.getBody()).get("error")).isEqualTo("bad erase");
     }
 
     @Test

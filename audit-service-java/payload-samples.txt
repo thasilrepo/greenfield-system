@@ -1,4 +1,10 @@
+
 Here are concise sample request payloads / query examples for every AuditController endpoint.
+For POST /auth/login:
+{   "username": "admin",   "password": "adminpass" }
+For GET /auth/validate: Send the Authorization header:
+Authorization: Bearer <jwt-token>
+
 1)
 POST /audit/events JSON body: {
   "eventType": "USER_LOGIN",
